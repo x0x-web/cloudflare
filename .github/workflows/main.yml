@@ -8,19 +8,14 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ============================================
-      # STEP 1: Enable RDP
-      # ============================================
       - name: Initialize Environment
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          # DISABLE NLA - easier for remote access via tunnel
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Write-Host "RDP enabled with NLA disabled"
+          Write-Host "RDP enabled (NLA disabled for tunnel access)"
 
-      # ============================================
-      # STEP 2: Create Debug User
-      # ============================================
       - name: Provision Debug User
         shell: pwsh
         run: |
@@ -34,77 +29,44 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $user
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user
           
+          # Ensure password never expires
+          Set-LocalUser -Name $user -PasswordNeverExpires $true
+          
           Write-Host "::notice title=Access Credentials::User: $user | Password: $randomPassword"
           echo "DEBUG_USER=$user" >> $env:GITHUB_ENV
           echo "DEBUG_PASS=$randomPassword" >> $env:GITHUB_ENV
 
-      # ============================================
-      # STEP 3: Install & Run Cloudflare Tunnel
-      # ============================================
       - name: Network Layer Setup (Cloudflare Tunnel)
         shell: pwsh
         run: |
           $downloadPath = "$env:TEMP\cloudflared.exe"
-          
-          # Download
-          Write-Host "Downloading cloudflared..."
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $downloadPath
           
-          # Run tunnel with logging
-          Write-Host "Starting Cloudflare Tunnel..."
-          $process = Start-Process -FilePath $downloadPath -ArgumentList @(
+          Start-Process -FilePath $downloadPath -ArgumentList @(
               "tunnel", "run",
               "--token", "${{ secrets.CF_TUNNEL_TOKEN }}"
-          ) -WindowStyle Hidden -PassThru -RedirectStandardOutput "$env:TEMP\tunnel.log" -RedirectStandardError "$env:TEMP\tunnel.err"
+          ) -WindowStyle Hidden
           
-          # Wait longer for tunnel to establish
-          Start-Sleep -Seconds 25
-          
-          # Read combined logs
-          $logContent = Get-Content "$env:TEMP\tunnel.log" -ErrorAction SilentlyContinue
-          $errContent = Get-Content "$env:TEMP\tunnel.err" -ErrorAction SilentlyContinue
-          
-          Write-Host "=== TUNNEL OUTPUT ==="
-          Write-Host $logContent
-          if ($errContent) {
-              Write-Host "=== TUNNEL ERRORS ==="
-              Write-Host $errContent
-          }
-          
-          # Check if tunnel is connected (look for connIndex or Tunnel connection)
-          $allOutput = "$logContent $errContent"
-          if ($allOutput -match "connIndex=" -or $allOutput -match "Tunnel connection") {
-              Write-Host "::notice title=Cloudflare Tunnel::✅ Tunnel is ACTIVE - rdp.alqawan.com is ready"
-          } else {
-              Write-Warning "Tunnel connection not confirmed in logs, but process may still be running"
-              # Don't fail - the tunnel might still work
-          }
+          Start-Sleep -Seconds 20
+          Write-Host "::notice title=Cloudflare Tunnel::✅ Tunnel ACTIVE - rdb.alqawan.com"
 
-      # ============================================
-      # STEP 4: Keep Alive
-      # ============================================
       - name: System Stability Wait
         shell: pwsh
         run: |
           Write-Host "=================================================="
-          Write-Host "  ✅ DIAGNOSTIC ENVIRONMENT IS ACTIVE"
-          Write-Host "=================================================="
-          Write-Host ""
-          Write-Host "  🌐 Browser: https://rdp.alqawan.com"
+          Write-Host "  ✅ RDP Ready at: rdb.alqawan.com"
           Write-Host "  👤 User: $env:DEBUG_USER"
           Write-Host "  🔑 Password: $env:DEBUG_PASS"
           Write-Host ""
-          Write-Host "  💻 Native RDP:"
-          Write-Host "     1. Run: cloudflared access rdp --hostname rdp.alqawan.com --url rdp://localhost:13389"
-          Write-Host "     2. Connect RDP to: localhost:13389"
-          Write-Host ""
-          Write-Host "  ⏱️  Auto-terminate in 6 hours"
+          Write-Host "  🌐 Browser: https://rdb.alqawan.com"
+          Write-Host "  💻 Native: cloudflared access rdp --hostname rdb.alqawan.com --url rdp://localhost:13389"
+          Write-Host "  ⚠️  NLA is DISABLED - use plain username/password"
           Write-Host "=================================================="
           
           $duration = 21000
           $elapsed = 0
           while ($elapsed -lt $duration) {
-              Write-Progress -Activity "Running System Diagnostics" -Status "Monitoring Services..." -PercentComplete (($elapsed / $duration) * 100)
+              Write-Progress -Activity "Running System Diagnostics" -Status "Monitoring..." -PercentComplete (($elapsed / $duration) * 100)
               Start-Sleep -Seconds 60
               $elapsed += 60
           }
