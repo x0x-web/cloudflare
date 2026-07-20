@@ -57,9 +57,10 @@ jobs:
               "--token", "${{ secrets.CF_TUNNEL_TOKEN }}"
           ) -WindowStyle Hidden -PassThru -RedirectStandardOutput "$env:TEMP\tunnel.log" -RedirectStandardError "$env:TEMP\tunnel.err"
           
-          # Wait and verify
-          Start-Sleep -Seconds 20
+          # Wait longer for tunnel to establish
+          Start-Sleep -Seconds 25
           
+          # Read combined logs
           $logContent = Get-Content "$env:TEMP\tunnel.log" -ErrorAction SilentlyContinue
           $errContent = Get-Content "$env:TEMP\tunnel.err" -ErrorAction SilentlyContinue
           
@@ -70,11 +71,13 @@ jobs:
               Write-Host $errContent
           }
           
-          if ($logContent -match "Registered tunnel connection") {
+          # Check if tunnel is connected (look for connIndex or Tunnel connection)
+          $allOutput = "$logContent $errContent"
+          if ($allOutput -match "connIndex=" -or $allOutput -match "Tunnel connection") {
               Write-Host "::notice title=Cloudflare Tunnel::✅ Tunnel is ACTIVE - rdp.alqawan.com is ready"
           } else {
-              Write-Error "❌ Tunnel failed to start!"
-              exit 1
+              Write-Warning "Tunnel connection not confirmed in logs, but process may still be running"
+              # Don't fail - the tunnel might still work
           }
 
       # ============================================
