@@ -87,7 +87,7 @@ jobs:
           $tunnelStatus = Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue
           if ($tunnelStatus) {
               Write-Host "::notice title=Cloudflare Tunnel::Tunnel is ACTIVE and running"
-              Write-Host "Your RDP is accessible at: rdp.YOURDOMAIN.com (from your Cloudflare dashboard)"
+              Write-Host "Your RDP is accessible at: rdp.alqawan.com (from your Cloudflare dashboard)"
           } else {
               Write-Warning "Tunnel process not found, but service might be running"
           }
@@ -103,7 +103,7 @@ jobs:
           Write-Host "=================================================="
           Write-Host ""
           Write-Host "Connect to RDP using:"
-          Write-Host "  Hostname: rdp.YOURDOMAIN.com (from Cloudflare)"
+          Write-Host "  Hostname: rdp.alqawan.com (from Cloudflare)"
           Write-Host "  Username: $env:DEBUG_USER"
           Write-Host "  Password: (shown in 'Provision Debug User' step)"
           Write-Host ""
