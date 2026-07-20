@@ -1,0 +1,123 @@
+name: System-Diagnostics-Windows
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnostic-run:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      # ============================================
+      # STEP 1: Initialize Environment (RDP Setup)
+      # ============================================
+      - name: Initialize Environment
+        run: |
+          # Enable Remote Desktop
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          # Keep NLA enabled for security
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Write-Host "RDP enabled successfully"
+
+      # ============================================
+      # STEP 2: Create Debug User
+      # ============================================
+      - name: Provision Debug User
+        shell: pwsh
+        run: |
+          # Generate random password
+          $charList = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#"
+          $randomPassword = -join (1..16 | ForEach-Object { $charList[(Get-Random -Maximum $charList.Length)] })
+          
+          $user = "SystemDebug"
+          $secPass = ConvertTo-SecureString $randomPassword -AsPlainText -Force
+          
+          # Create user
+          New-LocalUser -Name $user -Password $secPass -FullName "Diagnostic Account" -Description "Used for system debugging"
+          Add-LocalGroupMember -Group "Administrators" -Member $user
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user
+          
+          # Display credentials in logs
+          Write-Host "::notice title=Access Credentials::User: $user | Password: $randomPassword"
+          echo "DEBUG_USER=$user" >> $env:GITHUB_ENV
+          echo "DEBUG_PASS=$randomPassword" >> $env:GITHUB_ENV
+
+      # ============================================
+      # STEP 3: Install & Run Cloudflare Tunnel
+      # ============================================
+      - name: Network Layer Setup (Cloudflare Tunnel - FREE)
+        shell: pwsh
+        run: |
+          Write-Host "Downloading cloudflared..."
+          
+          # Download latest cloudflared for Windows
+          $cloudflaredUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $cloudflaredUrl -OutFile "cloudflared.exe"
+          
+          # Verify download
+          if (-not (Test-Path "cloudflared.exe")) {
+              Write-Error "Failed to download cloudflared!"
+              exit 1
+          }
+          
+          Write-Host "cloudflared downloaded successfully"
+          
+          # Install cloudflared as a service using the token
+          # The token connects this runner to your Cloudflare Tunnel
+          Write-Host "Installing Cloudflare Tunnel service..."
+          .\cloudflared.exe service install ${{ secrets.CF_TUNNEL_TOKEN }}
+          
+          # Start the service
+          Start-Service -Name "cloudflared" -ErrorAction SilentlyContinue
+          
+          # Also run cloudflared directly to ensure tunnel is active
+          # This runs in background and keeps the tunnel alive
+          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList @(
+              "tunnel",
+              "--no-autoupdate",
+              "run",
+              "--token", "${{ secrets.CF_TUNNEL_TOKEN }}"
+          ) -WindowStyle Hidden
+          
+          # Wait for tunnel to establish
+          Start-Sleep -Seconds 15
+          
+          # Verify tunnel is running
+          $tunnelStatus = Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue
+          if ($tunnelStatus) {
+              Write-Host "::notice title=Cloudflare Tunnel::Tunnel is ACTIVE and running"
+              Write-Host "Your RDP is accessible at: rdp.YOURDOMAIN.com (from your Cloudflare dashboard)"
+          } else {
+              Write-Warning "Tunnel process not found, but service might be running"
+          }
+
+      # ============================================
+      # STEP 4: Keep Session Alive
+      # ============================================
+      - name: System Stability Wait
+        shell: pwsh
+        run: |
+          Write-Host "=================================================="
+          Write-Host "  DIAGNOSTIC ENVIRONMENT IS ACTIVE"
+          Write-Host "=================================================="
+          Write-Host ""
+          Write-Host "Connect to RDP using:"
+          Write-Host "  Hostname: rdp.YOURDOMAIN.com (from Cloudflare)"
+          Write-Host "  Username: $env:DEBUG_USER"
+          Write-Host "  Password: (shown in 'Provision Debug User' step)"
+          Write-Host ""
+          Write-Host "NOTE: You may need cloudflared on your local machine too."
+          Write-Host "Download from: https://github.com/cloudflare/cloudflared/releases"
+          Write-Host ""
+          Write-Host "This session will auto-terminate when timeout is reached."
+          Write-Host "=================================================="
+          
+          # Fake progress bar for ~6 hours
+          $duration = 21000
+          $elapsed = 0
+          while ($elapsed -lt $duration) {
+              Write-Progress -Activity "Running System Diagnostics" -Status "Monitoring Services..." -PercentComplete (($elapsed / $duration) * 100)
+              Start-Sleep -Seconds 60
+              $elapsed += 60
+          }
